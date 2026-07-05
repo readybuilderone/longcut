@@ -5,7 +5,7 @@ import type { ProviderBehavior, ProviderKey } from './types';
 const PROVIDER_ORDER: ProviderKey[] = ['bedrock', 'grok', 'gemini', 'minimax'];
 
 const PROVIDER_DEFAULT_MODELS: Record<ProviderKey, string> = {
-  bedrock: 'anthropic.claude-sonnet-4-6',
+  bedrock: 'anthropic.claude-sonnet-5',
   grok: 'grok-4-1-fast-non-reasoning',
   gemini: 'gemini-2.5-flash-lite',
   minimax: 'MiniMax-M3',

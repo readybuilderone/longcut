@@ -38,7 +38,7 @@ test('registry constructs the Bedrock adapter when AWS_REGION is configured', ()
     () => {
       const adapter = getProvider('bedrock');
       assert.equal(adapter.name, 'bedrock');
-      assert.equal(adapter.defaultModel, 'anthropic.claude-sonnet-4-6');
+      assert.equal(adapter.defaultModel, 'anthropic.claude-sonnet-5');
       assert.equal(typeof adapter.generate, 'function');
     }
   );

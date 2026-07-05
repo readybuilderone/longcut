@@ -96,8 +96,8 @@ test('provider default model returns MiniMax-M3 for MiniMax', () => {
   assert.equal(getProviderDefaultModel('minimax'), 'MiniMax-M3');
 });
 
-test('provider default model returns Bedrock-prefixed Claude Sonnet for Bedrock', () => {
-  assert.equal(getProviderDefaultModel('bedrock'), 'anthropic.claude-sonnet-4-6');
+test('provider default model returns Bedrock-prefixed Claude Sonnet 5 for Bedrock', () => {
+  assert.equal(getProviderDefaultModel('bedrock'), 'anthropic.claude-sonnet-5');
 });
 
 test('provider model defaults derive fast and pro topic models from configured MiniMax provider', () => {
@@ -161,9 +161,9 @@ test('effective provider resolves to Bedrock when only AWS_REGION is present', (
     () => {
       assert.equal(getEffectiveProviderKey(), 'bedrock');
       assert.deepEqual(getProviderModelDefaults(), {
-        defaultModel: 'anthropic.claude-sonnet-4-6',
-        fastModel: 'anthropic.claude-sonnet-4-6',
-        proModel: 'anthropic.claude-sonnet-4-6',
+        defaultModel: 'anthropic.claude-sonnet-5',
+        fastModel: 'anthropic.claude-sonnet-5',
+        proModel: 'anthropic.claude-sonnet-5',
       });
     }
   );

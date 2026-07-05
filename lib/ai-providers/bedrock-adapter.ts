@@ -1,13 +1,14 @@
 import { AnthropicBedrockMantle } from '@anthropic-ai/bedrock-sdk';
-import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import type {
   Message,
   MessageCreateParamsNonStreaming,
+  Tool,
 } from '@anthropic-ai/sdk/resources/messages';
+import { z } from 'zod';
 import type { ProviderAdapter, ProviderGenerateParams, ProviderGenerateResult } from './types';
 
 const PROVIDER_NAME = 'bedrock';
-const DEFAULT_MODEL = 'anthropic.claude-sonnet-4-6';
+const DEFAULT_MODEL = 'anthropic.claude-sonnet-5';
 // Sonnet output ceiling; the chat route requests 65536 which would 400 unclamped.
 const MAX_OUTPUT_TOKENS = 64000;
 const DEFAULT_OUTPUT_TOKENS = 16000;
@@ -21,6 +22,48 @@ function resolveMaxTokens(requested?: number): number {
     return DEFAULT_OUTPUT_TOKENS;
   }
   return Math.min(requested, MAX_OUTPUT_TOKENS);
+}
+
+function ensureSchemaName(name?: string) {
+  if (name && name.trim().length > 0) {
+    return name.trim();
+  }
+  return 'ResponseSchema';
+}
+
+// The Bedrock Mantle endpoint rejects output_config.format and strict tools
+// ("Extra inputs are not permitted"), so structured output rides on a forced
+// tool call whose input_schema is the converted Zod schema. The tool input is
+// re-validated with Zod before returning.
+function buildStructuredTool(params: ProviderGenerateParams): Tool {
+  if (!params.zodSchema) {
+    throw new Error('buildStructuredTool requires a zodSchema.');
+  }
+
+  let jsonSchema: Tool['input_schema'];
+  try {
+    jsonSchema = z.toJSONSchema(params.zodSchema) as Tool['input_schema'];
+  } catch (error) {
+    throw new Error(
+      error instanceof Error
+        ? `Failed to convert schema: ${error.message}`
+        : 'Failed to convert schema'
+    );
+  }
+
+  return {
+    name: 'emit_result',
+    description: `Return the ${ensureSchemaName(params.schemaName)} result.`,
+    input_schema: jsonSchema,
+  };
+}
+
+function extractToolInput(message: Message): unknown {
+  const toolUse = message.content.find(
+    (block): block is Extract<typeof block, { type: 'tool_use' }> =>
+      block.type === 'tool_use'
+  );
+  return toolUse?.input;
 }
 
 function extractText(message: Message): string {
@@ -94,19 +137,21 @@ export function createBedrockAdapter(): ProviderAdapter {
       let content: string;
 
       if (params.zodSchema) {
-        const parsed = await client.messages.parse(
+        const tool = buildStructuredTool(params);
+        message = await client.messages.create(
           {
             ...baseRequest,
-            output_config: { format: zodOutputFormat(params.zodSchema) },
+            tools: [tool],
+            tool_choice: { type: 'tool', name: tool.name },
           },
           requestOptions
         );
-        message = parsed;
 
-        if (parsed.parsed_output == null) {
+        const toolInput = extractToolInput(message);
+        if (toolInput == null) {
           throw new Error('Bedrock API returned an empty structured response.');
         }
-        const validated = params.zodSchema.parse(parsed.parsed_output);
+        const validated = params.zodSchema.parse(toolInput);
         content = JSON.stringify(validated);
       } else {
         message = await client.messages.create(baseRequest, requestOptions);
