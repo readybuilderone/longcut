@@ -89,10 +89,13 @@ The app uses Next.js 15 App Router with two main pages:
 
 #### AI Provider Routing (`lib/ai-client.ts`, `lib/ai-providers/`)
 - **Provider Adapters**: Text generation routes through provider adapters configured via `AI_PROVIDER` / `NEXT_PUBLIC_AI_PROVIDER`
-- **Current Providers**: MiniMax, Grok, and Gemini are available through the provider registry
+- **Current Providers**: Bedrock (Claude on AWS), Grok, Gemini, and MiniMax are available through the provider registry
 - **Provider Config**: `lib/ai-providers/provider-config.ts` normalizes provider keys, resolves the preferred provider, and falls back based on available credentials
-- **Structured Output**: Shared provider interfaces preserve type-safe prompt and response handling across adapters
-- **Retry Logic**: Provider-specific clients handle overload and rate-limit retries according to adapter behavior
+- **Provider Guards**: Each provider has an env guard that marks it as configured. Grok/Gemini/MiniMax use API keys; Bedrock uses `AWS_REGION` (or `AWS_BEDROCK_REGION`) because AWS credentials resolve via the standard chain (env keys, profile, IAM role)
+- **Priority Order**: `[bedrock, grok, gemini, minimax]` — with no explicit `AI_PROVIDER`, the first provider whose guard is satisfied wins. An environment with `AWS_REGION` therefore auto-selects Bedrock; set `AI_PROVIDER` explicitly to opt out (see `docs/adr/0001`)
+- **Bedrock Specifics**: Claude-only via Anthropic's Mantle SDK (`@anthropic-ai/bedrock-sdk`); default model `anthropic.claude-sonnet-5` (`anthropic.`-prefixed IDs only). Structured output rides on a forced tool call (the Mantle endpoint rejects `output_config.format`); sampling parameters are not forwarded (rejected by current Claude models on Bedrock); generations stream internally
+- **Structured Output**: Shared provider interfaces preserve type-safe prompt and response handling across adapters; `lib/ai-providers/schema-utils.ts` holds the shared Zod→JSON-schema conversion
+- **Retry Logic**: Provider-specific clients handle overload and rate-limit retries according to adapter behavior; error messages are normalized to the registry's retryable vocabulary ("rate limit", "service unavailable", "timeout") so cross-provider fallback triggers
 - **Timeout Handling**: Optional timeout support with graceful error handling across providers
 - **Topic Generation Modes**:
   - `smart`: High-quality analysis with candidate pool for theme-based exploration
@@ -319,14 +322,17 @@ The application uses aggressive parallel processing to minimize latency:
 
 ### Environment Variables
 Required in `.env.local`:
-- `MINIMAX_API_KEY`: MiniMax API key for text generation when `AI_PROVIDER=minimax`
+- One text-provider configuration:
+  - `MINIMAX_API_KEY` for MiniMax, `XAI_API_KEY` for Grok, `GEMINI_API_KEY` for Gemini, or
+  - `AWS_REGION` (plus AWS credentials via the standard chain — IAM role, profile, or `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`) for Bedrock
 - `NEXT_PUBLIC_SUPABASE_URL`: Supabase project URL
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`: Supabase anonymous key
 
 Also commonly needed:
-- `AI_PROVIDER`: Server-side text provider selection (`minimax`, `grok`, or `gemini`)
+- `AI_PROVIDER`: Server-side text provider selection (`bedrock`, `grok`, `gemini`, or `minimax`). Without it, the first configured provider in priority order wins — note `AWS_REGION` alone auto-selects Bedrock
 - `NEXT_PUBLIC_AI_PROVIDER`: Set this to match `AI_PROVIDER` for consistent client/server provider behavior in Phase 1
-- `AI_DEFAULT_MODEL`: Optional text model override (current default: `MiniMax-M3`)
+- `AI_DEFAULT_MODEL`: Optional text model override (per-provider defaults: `anthropic.claude-sonnet-5` for Bedrock, `MiniMax-M3` for MiniMax)
+- `AWS_BEDROCK_REGION`: Optional Bedrock-specific region override (takes precedence over `AWS_REGION`)
 - `NEXT_PUBLIC_AI_MODEL`: Optional client-side model hint; it does not select the server provider by itself
 - `GEMINI_API_KEY`: Still required for `app/api/generate-image/route.ts`
 
