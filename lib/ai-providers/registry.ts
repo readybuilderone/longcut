@@ -3,10 +3,9 @@ import { createGeminiAdapter } from './gemini-adapter';
 import { createGrokAdapter } from './grok-adapter';
 import { createMiniMaxAdapter } from './minimax-adapter';
 import {
-  getConfiguredProviderKey,
+  getEffectiveProviderKey,
   getProviderEnvGuard,
   getProviderFallbackOrder,
-  getProviderPriorityOrder,
 } from './provider-config';
 import type {
   ProviderAdapter,
@@ -27,19 +26,7 @@ const providerFactories: Record<ProviderKey, ProviderFactory> = {
 const providerCache: Partial<Record<ProviderKey, ProviderAdapter>> = {};
 
 function resolveProviderKey(preferred?: string): ProviderKey {
-  const envPreference = getConfiguredProviderKey(preferred);
-
-  if (envPreference) {
-    return envPreference;
-  }
-
-  for (const key of getProviderPriorityOrder()) {
-    if (getProviderEnvGuard(key)()) {
-      return key;
-    }
-  }
-
-  return 'grok';
+  return getEffectiveProviderKey(preferred);
 }
 
 export function getProviderKey(preferred?: string): ProviderKey {
