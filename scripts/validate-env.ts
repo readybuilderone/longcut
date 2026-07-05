@@ -82,15 +82,28 @@ function validateRequiredEnvVars(): ValidationResult {
     }
   }
 
+  // No hardcoded default: with AI_PROVIDER unset the registry auto-discovers
+  // by priority order (bedrock first) — mirror that here instead of guessing.
   const preferredProvider =
-    process.env.AI_PROVIDER ?? process.env.NEXT_PUBLIC_AI_PROVIDER ?? 'grok';
+    process.env.AI_PROVIDER ?? process.env.NEXT_PUBLIC_AI_PROVIDER;
   const hasMiniMaxKey = !!process.env.MINIMAX_API_KEY?.trim();
   const hasGrokKey = !!process.env.XAI_API_KEY?.trim();
   const hasGeminiKey = !!process.env.GEMINI_API_KEY?.trim();
+  // Bedrock's guard is a region, not an API key — credentials resolve via the
+  // standard AWS chain (IAM role, profile, or env keys).
+  const hasBedrockRegion = !!(
+    process.env.AWS_BEDROCK_REGION?.trim() ?? process.env.AWS_REGION?.trim()
+  );
 
-  if (!hasMiniMaxKey && !hasGrokKey && !hasGeminiKey) {
+  if (!hasMiniMaxKey && !hasGrokKey && !hasGeminiKey && !hasBedrockRegion) {
     errors.push(
-      'Missing AI provider key: set MINIMAX_API_KEY for MiniMax, XAI_API_KEY for Grok, or GEMINI_API_KEY for Gemini.'
+      'Missing AI provider configuration: set AWS_REGION for Bedrock, MINIMAX_API_KEY for MiniMax, XAI_API_KEY for Grok, or GEMINI_API_KEY for Gemini.'
+    );
+  }
+
+  if (preferredProvider === 'bedrock' && !hasBedrockRegion) {
+    errors.push(
+      'AI_PROVIDER is set to "bedrock" but AWS_REGION (or AWS_BEDROCK_REGION) is missing.'
     );
   }
 
