@@ -1,8 +1,10 @@
+import { createBedrockAdapter } from './bedrock-adapter';
 import { createGeminiAdapter } from './gemini-adapter';
 import { createGrokAdapter } from './grok-adapter';
 import { createMiniMaxAdapter } from './minimax-adapter';
 import {
   getConfiguredProviderKey,
+  getProviderEnvGuard,
   getProviderFallbackOrder,
   getProviderPriorityOrder,
 } from './provider-config';
@@ -16,15 +18,10 @@ import type {
 type ProviderFactory = () => ProviderAdapter;
 
 const providerFactories: Record<ProviderKey, ProviderFactory> = {
+  bedrock: createBedrockAdapter,
   grok: createGrokAdapter,
   gemini: createGeminiAdapter,
   minimax: createMiniMaxAdapter,
-};
-
-const providerEnvGuards: Record<ProviderKey, () => string | undefined> = {
-  grok: () => process.env.XAI_API_KEY,
-  gemini: () => process.env.GEMINI_API_KEY,
-  minimax: () => process.env.MINIMAX_API_KEY,
 };
 
 const providerCache: Partial<Record<ProviderKey, ProviderAdapter>> = {};
@@ -37,7 +34,7 @@ function resolveProviderKey(preferred?: string): ProviderKey {
   }
 
   for (const key of getProviderPriorityOrder()) {
-    if (providerEnvGuards[key]()) {
+    if (getProviderEnvGuard(key)()) {
       return key;
     }
   }
@@ -54,7 +51,7 @@ function ensureProvider(key: ProviderKey): ProviderAdapter {
     return providerCache[key]!;
   }
 
-  const guard = providerEnvGuards[key];
+  const guard = getProviderEnvGuard(key);
   if (!guard()) {
     throw new Error(
       `AI provider "${key}" is not configured. Please supply the required environment variables.`
@@ -70,7 +67,7 @@ function ensureProvider(key: ProviderKey): ProviderAdapter {
 export function availableProviders(): ProviderKey[] {
   return (Object.keys(providerFactories) as ProviderKey[]).filter((key) => {
     try {
-      return !!providerEnvGuards[key]();
+      return !!getProviderEnvGuard(key)();
     } catch {
       return false;
     }

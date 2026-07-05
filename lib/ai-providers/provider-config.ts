@@ -1,14 +1,21 @@
 import type { ProviderBehavior, ProviderKey } from './types';
 
-const PROVIDER_ORDER: ProviderKey[] = ['grok', 'gemini', 'minimax'];
+// Bedrock is intentionally first: with no explicit AI_PROVIDER, any
+// environment with AWS_REGION auto-selects Bedrock (see ADR 0001).
+const PROVIDER_ORDER: ProviderKey[] = ['bedrock', 'grok', 'gemini', 'minimax'];
 
 const PROVIDER_DEFAULT_MODELS: Record<ProviderKey, string> = {
+  bedrock: 'anthropic.claude-sonnet-4-6',
   grok: 'grok-4-1-fast-non-reasoning',
   gemini: 'gemini-2.5-flash-lite',
   minimax: 'MiniMax-M3',
 };
 
 const PROVIDER_BEHAVIORS: Record<ProviderKey, ProviderBehavior> = {
+  bedrock: {
+    forceFullTranscriptTopicGeneration: false,
+    forceSmartModeOnClient: true,
+  },
   grok: {
     forceFullTranscriptTopicGeneration: true,
     forceSmartModeOnClient: true,
@@ -23,16 +30,29 @@ const PROVIDER_BEHAVIORS: Record<ProviderKey, ProviderBehavior> = {
   },
 };
 
-const PROVIDER_ENV_KEYS: Record<ProviderKey, string> = {
-  grok: 'XAI_API_KEY',
-  gemini: 'GEMINI_API_KEY',
-  minimax: 'MINIMAX_API_KEY',
+// The Bedrock guard is a region, not an API key: AWS credentials resolve via
+// the standard chain (env keys, profile, IAM role), so key presence would
+// misfire in role-based environments (see ADR 0001).
+const PROVIDER_ENV_GUARDS: Record<ProviderKey, () => string | undefined> = {
+  bedrock: () => process.env.AWS_BEDROCK_REGION ?? process.env.AWS_REGION,
+  grok: () => process.env.XAI_API_KEY,
+  gemini: () => process.env.GEMINI_API_KEY,
+  minimax: () => process.env.MINIMAX_API_KEY,
 };
+
+export function getProviderEnvGuard(key: ProviderKey): () => string | undefined {
+  return PROVIDER_ENV_GUARDS[key];
+}
 
 export function normalizeProviderKey(value?: string | null): ProviderKey | undefined {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
 
-  if (normalized === 'grok' || normalized === 'gemini' || normalized === 'minimax') {
+  if (
+    normalized === 'bedrock' ||
+    normalized === 'grok' ||
+    normalized === 'gemini' ||
+    normalized === 'minimax'
+  ) {
     return normalized;
   }
 
@@ -53,7 +73,7 @@ export function getEffectiveProviderKey(preferred?: string): ProviderKey {
   }
 
   for (const key of PROVIDER_ORDER) {
-    if (process.env[PROVIDER_ENV_KEYS[key]]) {
+    if (PROVIDER_ENV_GUARDS[key]()) {
       return key;
     }
   }
