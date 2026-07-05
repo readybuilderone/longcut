@@ -126,6 +126,9 @@ test('Bedrock adapter normalizes 429 into a retryable rate-limit error', async (
           (error: unknown) => {
             assert.ok(error instanceof Error);
             assert.match(error.message, /rate limit/i);
+            // Original SDK error (request-id, headers, stack) must survive
+            // for correlation with AWS-side logs.
+            assert.ok(error.cause instanceof Error);
             return true;
           }
         );
@@ -265,6 +268,16 @@ test('Bedrock adapter clamps maxOutputTokens to the cap and logs the clamp', asy
           assert.ok(
             warnings.some((w) => /clamp/i.test(w)),
             `expected a clamp warning, got: ${JSON.stringify(warnings)}`
+          );
+
+          // The chat route clamps on every request — the warn must not
+          // repeat per call (production log spam).
+          const warningsAfterFirst = warnings.length;
+          await adapter.generate({ prompt: 'hi again', maxOutputTokens: 65536 });
+          assert.equal(
+            warnings.length,
+            warningsAfterFirst,
+            'clamp warning should fire once per process, not per request'
           );
         }
       );

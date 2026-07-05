@@ -15,16 +15,23 @@ const DEFAULT_MODEL = 'anthropic.claude-sonnet-5';
 const MAX_OUTPUT_TOKENS = 64000;
 const DEFAULT_OUTPUT_TOKENS = 16000;
 
+// The chat route requests 65536 on every call, so a per-request warn would
+// spam production logs — warn once per process.
+let clampWarned = false;
+
 function resolveMaxTokens(requested?: number): number {
   if (typeof requested !== 'number' || requested <= 0) {
     return DEFAULT_OUTPUT_TOKENS;
   }
   if (requested > MAX_OUTPUT_TOKENS) {
-    // The cap is Sonnet's ceiling, not a per-model lookup — surface the clamp
-    // so operators on higher-output models can spot it.
-    console.warn(
-      `[Bedrock] maxOutputTokens ${requested} exceeds the ${MAX_OUTPUT_TOKENS} cap; clamping.`
-    );
+    if (!clampWarned) {
+      clampWarned = true;
+      // The cap is Sonnet's ceiling, not a per-model lookup — surface the
+      // clamp so operators on higher-output models can spot it.
+      console.warn(
+        `[Bedrock] maxOutputTokens ${requested} exceeds the ${MAX_OUTPUT_TOKENS} cap; clamping (warned once per process).`
+      );
+    }
     return MAX_OUTPUT_TOKENS;
   }
   return requested;
@@ -129,10 +136,13 @@ function buildBaseRequest(params: ProviderGenerateParams): MessageCreateParamsNo
 
 // Message phrasing is load-bearing: the registry's isRetryableError matches
 // on substrings ("rate limit", "service unavailable", "overload", "timeout",
-// and status codes) to decide whether to try a fallback provider.
+// and status codes) to decide whether to try a fallback provider. The
+// original SDK error (request-id, headers, stack) rides along as `cause`.
 function normalizeBedrockError(error: unknown): Error {
+  const cause = { cause: error };
+
   if (error instanceof APIConnectionTimeoutError) {
-    return new Error('Bedrock API timeout: request timed out.');
+    return new Error('Bedrock API timeout: request timed out.', cause);
   }
 
   if (error instanceof APIError) {
@@ -140,21 +150,21 @@ function normalizeBedrockError(error: unknown): Error {
     const detail = error.message;
 
     if (status === 429) {
-      return new Error(`Bedrock API rate limit: ${detail}`);
+      return new Error(`Bedrock API rate limit: ${detail}`, cause);
     }
     if (status === 401 || status === 403) {
-      return new Error(`Bedrock API authentication failed: ${detail}`);
+      return new Error(`Bedrock API authentication failed: ${detail}`, cause);
     }
     if (status === 408) {
-      return new Error(`Bedrock API timeout: ${detail}`);
+      return new Error(`Bedrock API timeout: ${detail}`, cause);
     }
     if (typeof status === 'number' && status >= 500) {
-      return new Error(`Bedrock API service unavailable (${status}): ${detail}`);
+      return new Error(`Bedrock API service unavailable (${status}): ${detail}`, cause);
     }
-    return new Error(`Bedrock API error${status ? ` (${status})` : ''}: ${detail}`);
+    return new Error(`Bedrock API error${status ? ` (${status})` : ''}: ${detail}`, cause);
   }
 
-  return error instanceof Error ? error : new Error(String(error));
+  return error instanceof Error ? error : new Error(String(error), cause);
 }
 
 export function createBedrockAdapter(): ProviderAdapter {
