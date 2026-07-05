@@ -78,7 +78,9 @@ export function getEffectiveProviderKey(preferred?: string): ProviderKey {
     }
   }
 
-  return 'grok';
+  // Nothing configured: every provider fails at construction anyway, so this
+  // only picks which error the user sees — keep it consistent with the order.
+  return PROVIDER_ORDER[0];
 }
 
 export function getProviderDefaultModel(key: ProviderKey): string {

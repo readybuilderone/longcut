@@ -8,41 +8,7 @@ import {
   retryProviderBackedTopicGeneration,
 } from '../ai-processing';
 import { generateStructuredContent } from '../ai-providers';
-
-function withEnv<T>(
-  values: Record<string, string | undefined>,
-  run: () => Promise<T>
-) {
-  const originalValues = new Map<string, string | undefined>();
-
-  for (const [key, value] of Object.entries(values)) {
-    originalValues.set(key, process.env[key]);
-    if (value === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = value;
-    }
-  }
-
-  return run().finally(() => {
-    for (const [key, value] of originalValues.entries()) {
-      if (value === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
-    }
-  });
-}
-
-function withMockFetch<T>(mockFetch: typeof fetch, run: () => Promise<T>) {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = mockFetch;
-
-  return run().finally(() => {
-    globalThis.fetch = originalFetch;
-  });
-}
+import { withEnvAsync as withEnv, withMockFetch } from './helpers';
 
 function createTranscript(durationSeconds: number) {
   return [

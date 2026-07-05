@@ -3,38 +3,7 @@ import assert from 'node:assert/strict';
 import { z } from 'zod';
 
 import { createMiniMaxAdapter } from '../ai-providers/minimax-adapter';
-
-function withEnv<T>(values: Record<string, string | undefined>, run: () => Promise<T>) {
-  const originalValues = new Map<string, string | undefined>();
-
-  for (const [key, value] of Object.entries(values)) {
-    originalValues.set(key, process.env[key]);
-    if (value === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = value;
-    }
-  }
-
-  return run().finally(() => {
-    for (const [key, value] of originalValues.entries()) {
-      if (value === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
-    }
-  });
-}
-
-function withMockFetch<T>(mockFetch: typeof fetch, run: () => Promise<T>) {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = mockFetch;
-
-  return run().finally(() => {
-    globalThis.fetch = originalFetch;
-  });
-}
+import { withEnvAsync as withEnv, withMockFetch } from './helpers';
 
 test('MiniMax adapter strips <think> tags and normalizes usage', async () => {
   await withEnv({ MINIMAX_API_KEY: 'test-key' }, async () => {

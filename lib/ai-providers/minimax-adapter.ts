@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { convertZodSchema, ensureSchemaName } from './schema-utils';
 import type { ProviderAdapter, ProviderGenerateParams, ProviderGenerateResult } from './types';
 
 const PROVIDER_NAME = 'minimax';
@@ -82,14 +82,6 @@ function normalizeUsage(raw: any, latencyMs: number | undefined) {
   };
 }
 
-function ensureSchemaName(name?: string) {
-  if (name && name.trim().length > 0) {
-    return name.trim();
-  }
-
-  return 'ResponseSchema';
-}
-
 function normalizeMetadata(metadata: Record<string, unknown>): Record<string, string> {
   return Object.fromEntries(
     Object.entries(metadata).flatMap(([key, value]) => {
@@ -115,17 +107,7 @@ function buildPrompt(params: ProviderGenerateParams): string {
     return params.prompt;
   }
 
-  let schemaText = '{}';
-
-  try {
-    schemaText = JSON.stringify(z.toJSONSchema(params.zodSchema));
-  } catch (error) {
-    throw new Error(
-      error instanceof Error
-        ? `Failed to convert schema: ${error.message}`
-        : 'Failed to convert schema'
-    );
-  }
+  const schemaText = JSON.stringify(convertZodSchema(params.zodSchema));
 
   return `${params.prompt}\n\nReturn strict JSON only that matches the ${ensureSchemaName(
     params.schemaName

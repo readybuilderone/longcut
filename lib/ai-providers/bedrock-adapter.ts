@@ -1,10 +1,12 @@
 import { AnthropicBedrockMantle } from '@anthropic-ai/bedrock-sdk';
+import { APIError, APIConnectionTimeoutError } from '@anthropic-ai/sdk';
 import type {
   Message,
   MessageCreateParamsNonStreaming,
   Tool,
 } from '@anthropic-ai/sdk/resources/messages';
-import { z } from 'zod';
+import { getProviderEnvGuard } from './provider-config';
+import { convertZodSchema, ensureSchemaName } from './schema-utils';
 import type { ProviderAdapter, ProviderGenerateParams, ProviderGenerateResult } from './types';
 
 const PROVIDER_NAME = 'bedrock';
@@ -13,22 +15,26 @@ const DEFAULT_MODEL = 'anthropic.claude-sonnet-5';
 const MAX_OUTPUT_TOKENS = 64000;
 const DEFAULT_OUTPUT_TOKENS = 16000;
 
-function resolveRegion(): string | undefined {
-  return process.env.AWS_BEDROCK_REGION ?? process.env.AWS_REGION;
-}
+// The chat route requests 65536 on every call, so a per-request warn would
+// spam production logs — warn once per process.
+let clampWarned = false;
 
 function resolveMaxTokens(requested?: number): number {
   if (typeof requested !== 'number' || requested <= 0) {
     return DEFAULT_OUTPUT_TOKENS;
   }
-  return Math.min(requested, MAX_OUTPUT_TOKENS);
-}
-
-function ensureSchemaName(name?: string) {
-  if (name && name.trim().length > 0) {
-    return name.trim();
+  if (requested > MAX_OUTPUT_TOKENS) {
+    if (!clampWarned) {
+      clampWarned = true;
+      // The cap is Sonnet's ceiling, not a per-model lookup — surface the
+      // clamp so operators on higher-output models can spot it.
+      console.warn(
+        `[Bedrock] maxOutputTokens ${requested} exceeds the ${MAX_OUTPUT_TOKENS} cap; clamping (warned once per process).`
+      );
+    }
+    return MAX_OUTPUT_TOKENS;
   }
-  return 'ResponseSchema';
+  return requested;
 }
 
 // The Bedrock Mantle endpoint rejects output_config.format and strict tools
@@ -49,16 +55,7 @@ function buildStructuredTool(params: ProviderGenerateParams): {
     throw new Error('buildStructuredTool requires a zodSchema.');
   }
 
-  let jsonSchema: Record<string, unknown>;
-  try {
-    jsonSchema = z.toJSONSchema(params.zodSchema) as Record<string, unknown>;
-  } catch (error) {
-    throw new Error(
-      error instanceof Error
-        ? `Failed to convert schema: ${error.message}`
-        : 'Failed to convert schema'
-    );
-  }
+  const jsonSchema = convertZodSchema(params.zodSchema);
 
   const wrapped = jsonSchema.type !== 'object';
   const inputSchema = wrapped
@@ -137,8 +134,42 @@ function buildBaseRequest(params: ProviderGenerateParams): MessageCreateParamsNo
   return request;
 }
 
+// Message phrasing is load-bearing: the registry's isRetryableError matches
+// on substrings ("rate limit", "service unavailable", "overload", "timeout",
+// and status codes) to decide whether to try a fallback provider. The
+// original SDK error (request-id, headers, stack) rides along as `cause`.
+function normalizeBedrockError(error: unknown): Error {
+  const cause = { cause: error };
+
+  if (error instanceof APIConnectionTimeoutError) {
+    return new Error('Bedrock API timeout: request timed out.', cause);
+  }
+
+  if (error instanceof APIError) {
+    const status = error.status;
+    const detail = error.message;
+
+    if (status === 429) {
+      return new Error(`Bedrock API rate limit: ${detail}`, cause);
+    }
+    if (status === 401 || status === 403) {
+      return new Error(`Bedrock API authentication failed: ${detail}`, cause);
+    }
+    if (status === 408) {
+      return new Error(`Bedrock API timeout: ${detail}`, cause);
+    }
+    if (typeof status === 'number' && status >= 500) {
+      return new Error(`Bedrock API service unavailable (${status}): ${detail}`, cause);
+    }
+    return new Error(`Bedrock API error${status ? ` (${status})` : ''}: ${detail}`, cause);
+  }
+
+  return error instanceof Error ? error : new Error(String(error), cause);
+}
+
 export function createBedrockAdapter(): ProviderAdapter {
-  const awsRegion = resolveRegion();
+  // Same source of truth as provider discovery — the guard IS the region.
+  const awsRegion = getProviderEnvGuard('bedrock')();
   if (!awsRegion) {
     throw new Error(
       'AWS_REGION (or AWS_BEDROCK_REGION) is required to use the Bedrock provider. Set the environment variable and try again.'
@@ -161,26 +192,41 @@ export function createBedrockAdapter(): ProviderAdapter {
       let message: Message;
       let content: string;
 
-      if (params.zodSchema) {
-        const { tool, wrapped } = buildStructuredTool(params);
-        message = await client.messages.create(
-          {
-            ...baseRequest,
-            tools: [tool],
-            tool_choice: { type: 'tool', name: tool.name },
-          },
-          requestOptions
-        );
+      // Streaming keeps long generations from hitting HTTP timeouts; the
+      // adapter still resolves to a single complete result.
+      try {
+        if (params.zodSchema) {
+          const { tool, wrapped } = buildStructuredTool(params);
+          message = await client.messages
+            .stream(
+              {
+                ...baseRequest,
+                tools: [tool],
+                tool_choice: { type: 'tool', name: tool.name },
+              },
+              requestOptions
+            )
+            .finalMessage();
 
-        const toolInput = extractToolInput(message, wrapped);
-        if (toolInput == null) {
-          throw new Error('Bedrock API returned an empty structured response.');
+          const toolInput = extractToolInput(message, wrapped);
+          if (toolInput == null) {
+            throw new Error('Bedrock API returned an empty structured response.');
+          }
+          const parsed = params.zodSchema.safeParse(toolInput);
+          if (!parsed.success) {
+            throw new Error(
+              `Bedrock structured output validation failed: ${parsed.error.message}`
+            );
+          }
+          content = JSON.stringify(parsed.data);
+        } else {
+          message = await client.messages
+            .stream(baseRequest, requestOptions)
+            .finalMessage();
+          content = extractText(message);
         }
-        const validated = params.zodSchema.parse(toolInput);
-        content = JSON.stringify(validated);
-      } else {
-        message = await client.messages.create(baseRequest, requestOptions);
-        content = extractText(message);
+      } catch (error) {
+        throw normalizeBedrockError(error);
       }
 
       if (!content) {

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { convertZodSchema, ensureSchemaName } from './schema-utils';
 import type { ProviderAdapter, ProviderGenerateParams, ProviderGenerateResult } from './types';
 
 const DEFAULT_MODEL = 'grok-4-1-fast-non-reasoning';
@@ -31,13 +31,6 @@ function sanitizeSchemaForGrok(schema: any): any {
     result[key] = sanitizeSchemaForGrok(value);
   }
   return result;
-}
-
-function ensureSchemaName(name?: string) {
-  if (name && name.trim().length > 0) {
-    return name.trim();
-  }
-  return 'ResponseSchema';
 }
 
 function buildAbortController(timeoutMs?: number) {
@@ -141,24 +134,15 @@ function buildPayload(params: ProviderGenerateParams) {
   }
 
   if (params.zodSchema) {
-    try {
-      const jsonSchema = z.toJSONSchema(params.zodSchema);
-      const sanitizedSchema = sanitizeSchemaForGrok(jsonSchema);
-      payload.response_format = {
-        type: 'json_schema',
-        json_schema: {
-          name: ensureSchemaName(params.schemaName),
-          schema: sanitizedSchema,
-        },
-      };
-    } catch (error) {
-      console.error('[Grok] Failed to convert Zod schema to JSON schema', error);
-      throw new Error(
-        error instanceof Error
-          ? `Failed to convert schema: ${error.message}`
-          : 'Failed to convert schema'
-      );
-    }
+    const jsonSchema = convertZodSchema(params.zodSchema);
+    const sanitizedSchema = sanitizeSchemaForGrok(jsonSchema);
+    payload.response_format = {
+      type: 'json_schema',
+      json_schema: {
+        name: ensureSchemaName(params.schemaName),
+        schema: sanitizedSchema,
+      },
+    };
   }
 
   return payload;

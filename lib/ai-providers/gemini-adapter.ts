@@ -3,7 +3,7 @@ import {
   SchemaType,
   type GenerationConfig,
 } from '@google/generative-ai';
-import { z } from 'zod';
+import { convertZodSchema } from './schema-utils';
 import type { ProviderAdapter, ProviderGenerateParams, ProviderGenerateResult } from './types';
 
 const PROVIDER_NAME = 'gemini';
@@ -143,22 +143,10 @@ function buildGenerationConfig(params: ProviderGenerateParams): GenerationConfig
   }
 
   if (params.zodSchema) {
-    try {
-      const jsonSchema = z.toJSONSchema(params.zodSchema);
-      const geminiSchema = convertToGeminiSchema(jsonSchema);
-      config.responseMimeType = 'application/json';
-      config.responseSchema = geminiSchema;
-    } catch (error) {
-      console.error(
-        '[Gemini] Failed to convert Zod schema to Gemini schema',
-        error
-      );
-      throw new Error(
-        error instanceof Error
-          ? `Failed to convert schema: ${error.message}`
-          : 'Failed to convert schema'
-      );
-    }
+    const jsonSchema = convertZodSchema(params.zodSchema);
+    const geminiSchema = convertToGeminiSchema(jsonSchema);
+    config.responseMimeType = 'application/json';
+    config.responseSchema = geminiSchema;
   }
 
   return config;

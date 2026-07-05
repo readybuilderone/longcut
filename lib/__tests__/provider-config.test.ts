@@ -9,31 +9,7 @@ import {
   getProviderFallbackOrder,
   normalizeProviderKey,
 } from '../ai-providers/provider-config';
-
-function withEnv<T>(values: Record<string, string | undefined>, run: () => T) {
-  const originalValues = new Map<string, string | undefined>();
-
-  for (const [key, value] of Object.entries(values)) {
-    originalValues.set(key, process.env[key]);
-    if (value === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = value;
-    }
-  }
-
-  try {
-    return run();
-  } finally {
-    for (const [key, value] of originalValues.entries()) {
-      if (value === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
-    }
-  }
-}
+import { withEnv } from './helpers';
 
 test('provider-key normalization accepts MiniMax', () => {
   assert.equal(normalizeProviderKey('MiniMax'), 'minimax');
@@ -182,6 +158,23 @@ test('Bedrock outranks other providers in credential auto-discovery', () => {
       AI_DEFAULT_MODEL: undefined,
       AI_FAST_MODEL: undefined,
       AI_PRO_MODEL: undefined,
+    },
+    () => {
+      assert.equal(getEffectiveProviderKey(), 'bedrock');
+    }
+  );
+});
+
+test('effective provider defaults to the head of PROVIDER_ORDER when nothing is configured', () => {
+  withEnv(
+    {
+      AI_PROVIDER: undefined,
+      NEXT_PUBLIC_AI_PROVIDER: undefined,
+      XAI_API_KEY: undefined,
+      GEMINI_API_KEY: undefined,
+      MINIMAX_API_KEY: undefined,
+      AWS_REGION: undefined,
+      AWS_BEDROCK_REGION: undefined,
     },
     () => {
       assert.equal(getEffectiveProviderKey(), 'bedrock');
