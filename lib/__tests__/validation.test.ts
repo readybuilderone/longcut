@@ -36,6 +36,8 @@ test('model schema defaults to MiniMax model when only MINIMAX_API_KEY is presen
       XAI_API_KEY: undefined,
       GEMINI_API_KEY: undefined,
       MINIMAX_API_KEY: 'test-minimax-key',
+      AWS_REGION: undefined,
+      AWS_BEDROCK_REGION: undefined,
       AI_DEFAULT_MODEL: undefined,
     },
     async () => {
