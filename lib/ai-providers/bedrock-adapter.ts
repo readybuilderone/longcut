@@ -35,14 +35,23 @@ function ensureSchemaName(name?: string) {
 // ("Extra inputs are not permitted"), so structured output rides on a forced
 // tool call whose input_schema is the converted Zod schema. The tool input is
 // re-validated with Zod before returning.
-function buildStructuredTool(params: ProviderGenerateParams): Tool {
+//
+// Tool input_schema must be type "object"; non-object schemas (the app's
+// topicGenerationSchema is a top-level z.array) are wrapped in {result: ...}
+// and unwrapped on extraction.
+const WRAPPER_KEY = 'result';
+
+function buildStructuredTool(params: ProviderGenerateParams): {
+  tool: Tool;
+  wrapped: boolean;
+} {
   if (!params.zodSchema) {
     throw new Error('buildStructuredTool requires a zodSchema.');
   }
 
-  let jsonSchema: Tool['input_schema'];
+  let jsonSchema: Record<string, unknown>;
   try {
-    jsonSchema = z.toJSONSchema(params.zodSchema) as Tool['input_schema'];
+    jsonSchema = z.toJSONSchema(params.zodSchema) as Record<string, unknown>;
   } catch (error) {
     throw new Error(
       error instanceof Error
@@ -51,19 +60,37 @@ function buildStructuredTool(params: ProviderGenerateParams): Tool {
     );
   }
 
+  const wrapped = jsonSchema.type !== 'object';
+  const inputSchema = wrapped
+    ? {
+        type: 'object',
+        properties: { [WRAPPER_KEY]: jsonSchema },
+        required: [WRAPPER_KEY],
+      }
+    : jsonSchema;
+
   return {
-    name: 'emit_result',
-    description: `Return the ${ensureSchemaName(params.schemaName)} result.`,
-    input_schema: jsonSchema,
+    tool: {
+      name: 'emit_result',
+      description: `Return the ${ensureSchemaName(params.schemaName)} result.`,
+      input_schema: inputSchema as Tool['input_schema'],
+    },
+    wrapped,
   };
 }
 
-function extractToolInput(message: Message): unknown {
+function extractToolInput(message: Message, wrapped: boolean): unknown {
   const toolUse = message.content.find(
     (block): block is Extract<typeof block, { type: 'tool_use' }> =>
       block.type === 'tool_use'
   );
-  return toolUse?.input;
+  const input = toolUse?.input;
+
+  if (wrapped && input != null && typeof input === 'object') {
+    return (input as Record<string, unknown>)[WRAPPER_KEY];
+  }
+
+  return input;
 }
 
 function extractText(message: Message): string {
@@ -102,12 +129,10 @@ function buildBaseRequest(params: ProviderGenerateParams): MessageCreateParamsNo
     ],
   };
 
-  // Claude 4+ rejects temperature and top_p together — send at most one.
-  if (typeof params.temperature === 'number') {
-    request.temperature = params.temperature;
-  } else if (typeof params.topP === 'number') {
-    request.top_p = params.topP;
-  }
+  // Sampling parameters are intentionally not forwarded: current Claude
+  // models on Bedrock reject them ("`temperature` is deprecated for this
+  // model" — verified live on anthropic.claude-sonnet-5). Callers' hints
+  // are silently dropped, matching how newer Claude APIs removed sampling.
 
   return request;
 }
@@ -137,7 +162,7 @@ export function createBedrockAdapter(): ProviderAdapter {
       let content: string;
 
       if (params.zodSchema) {
-        const tool = buildStructuredTool(params);
+        const { tool, wrapped } = buildStructuredTool(params);
         message = await client.messages.create(
           {
             ...baseRequest,
@@ -147,7 +172,7 @@ export function createBedrockAdapter(): ProviderAdapter {
           requestOptions
         );
 
-        const toolInput = extractToolInput(message);
+        const toolInput = extractToolInput(message, wrapped);
         if (toolInput == null) {
           throw new Error('Bedrock API returned an empty structured response.');
         }
