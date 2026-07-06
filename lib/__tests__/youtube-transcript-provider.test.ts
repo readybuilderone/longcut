@@ -267,3 +267,95 @@ test('fetchYouTubeTranscript parses legacy <text> XML format', async () => {
     }
   );
 });
+
+test('bot-check LOGIN_REQUIRED does not abort the client chain (misread as age restriction)', async () => {
+  // Real-world scenario from datacenter IPs: YouTube answers LOGIN_REQUIRED
+  // with reason "Sign in to confirm you're not a bot". That is a per-client
+  // bot check, NOT an age restriction — the next client identity may pass.
+  let playerCalls = 0;
+
+  await withMockFetch(
+    async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('youtube.com/watch')) {
+        return new Response(FAKE_WATCH_PAGE);
+      }
+
+      if (url.includes('/youtubei/v1/player')) {
+        playerCalls += 1;
+        if (playerCalls === 1) {
+          // First client (Android) gets the bot wall
+          return new Response(JSON.stringify({
+            playabilityStatus: {
+              status: 'LOGIN_REQUIRED',
+              reason: "Sign in to confirm you're not a bot",
+            },
+          }));
+        }
+        // Next client passes
+        return new Response(JSON.stringify({
+          playabilityStatus: { status: 'OK' },
+          captions: {
+            playerCaptionsTracklistRenderer: {
+              captionTracks: [
+                {
+                  baseUrl: 'https://captions.test/en',
+                  languageCode: 'en',
+                  name: { simpleText: 'English' },
+                },
+              ],
+            },
+          },
+        }));
+      }
+
+      if (url.startsWith('https://captions.test/en')) {
+        return new Response(`<?xml version="1.0"?><transcript>
+          <text start="0" dur="2">it worked</text>
+        </transcript>`);
+      }
+
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    },
+    async () => {
+      const result = await fetchYouTubeTranscript('video123');
+
+      assert.ok(result, 'bot check on one client must not kill the whole fetch');
+      assert.equal(result.segments[0].text, 'it worked');
+      assert.ok(playerCalls >= 2, 'should have tried a second client identity');
+    }
+  );
+});
+
+test('genuine age restriction still aborts the client chain', async () => {
+  let playerCalls = 0;
+
+  await withMockFetch(
+    async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('youtube.com/watch')) {
+        return new Response(FAKE_WATCH_PAGE);
+      }
+
+      if (url.includes('/youtubei/v1/player')) {
+        playerCalls += 1;
+        return new Response(JSON.stringify({
+          playabilityStatus: {
+            status: 'LOGIN_REQUIRED',
+            reason: 'Sign in to confirm your age. This video may be inappropriate for some users.',
+          },
+        }));
+      }
+
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    },
+    async () => {
+      const result = await fetchYouTubeTranscript('video123');
+
+      assert.equal(result, null);
+      assert.equal(playerCalls, 1, 'age restriction is video-level — no retry with other clients');
+    }
+  );
+});

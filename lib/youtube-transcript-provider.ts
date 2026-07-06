@@ -168,9 +168,11 @@ async function scrapeWatchPage(videoId: string): Promise<PageData> {
     if (html.includes('"playabilityStatus":{"status":"ERROR"')) {
       throw new TranscriptProviderError('VIDEO_UNAVAILABLE', 'Video is unavailable');
     }
-    if (html.includes('Sign in to confirm your age') || html.includes('"LOGIN_REQUIRED"')) {
+    if (html.includes('Sign in to confirm your age')) {
       throw new TranscriptProviderError('AGE_RESTRICTED', 'Video is age-restricted');
     }
+    // A bare LOGIN_REQUIRED marker here is usually a bot wall, not age gating —
+    // page scraping is only needed by the Web client, so let Android/iOS try.
     throw new TranscriptProviderError('PAGE_FETCH_FAILED', 'Could not extract INNERTUBE_API_KEY from page');
   }
 
@@ -268,7 +270,9 @@ async function fetchInnerTubePlayer(
     }
     if (status === 'LOGIN_REQUIRED') {
       const reason = (playabilityStatus.reason as string) || '';
-      if (reason.includes('age') || reason.includes('Sign in')) {
+      // "Sign in to confirm you're not a bot" is a per-client bot wall
+      // (common from datacenter IPs) — only age wording is video-level.
+      if (/\bage\b/i.test(reason)) {
         throw new TranscriptProviderError('AGE_RESTRICTED', 'Video is age-restricted');
       }
       throw new TranscriptProviderError('BOT_DETECTED', `Login required: ${reason}`);
