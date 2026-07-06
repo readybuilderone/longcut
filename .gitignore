@@ -57,3 +57,6 @@ CLAUDE.md
 # claude code tooling (local only)
 .agents/
 skills-lock.json
+
+# deployment config with real account/project identifiers (copy from example)
+scripts/deploy/deploy.config.json

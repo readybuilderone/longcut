@@ -1,17 +1,17 @@
 {
-  "awsAccountId": "750521193989",
+  "awsAccountId": "123456789012",
   "awsRegion": "us-east-1",
   "ecrRepository": "longcut",
   "serviceName": "longcut-app",
   "cluster": "default",
-  "subnets": ["subnet-00a36279c7bd5761a", "subnet-01b957deb5883f947"],
+  "subnets": ["subnet-aaaaaaaaaaaaaaaaa", "subnet-bbbbbbbbbbbbbbbbb"],
   "cpuArchitecture": "ARM64",
   "cpu": "512",
   "memory": "1024",
   "containerPort": 3000,
   "healthCheckPath": "/api/health",
   "scaling": { "minTaskCount": 1, "maxTaskCount": 2 },
-  "logGroup": "/aws/ecs/default/longcut-6285",
+  "logGroup": "/aws/ecs/default/longcut",
   "roles": {
     "execution": "longcut-ecs-execution",
     "infrastructure": "longcut-ecs-infra",
@@ -19,8 +19,8 @@
   },
   "ssmPrefix": "/longcut",
   "supabase": {
-    "projectRef": "olmjqnquaypmhovwrbkj",
-    "adminEmail": "neohan2016@outlook.com"
+    "projectRef": "your-project-ref",
+    "adminEmail": "you@example.com"
   },
   "aiProvider": "bedrock"
 }

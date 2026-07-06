@@ -10,6 +10,10 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CFG="$DIR/deploy.config.json"
+if [ ! -f "$CFG" ]; then
+  echo "ERROR: $CFG not found. Copy deploy.config.example.json to deploy.config.json and fill in your values." >&2
+  exit 1
+fi
 jqc() { python3 -c "import json;print(json.load(open('$CFG'))$1)"; }
 
 REGION=$(jqc "['awsRegion']")

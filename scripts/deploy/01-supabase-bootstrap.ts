@@ -24,13 +24,18 @@
  * Admin API.
  */
 import { execSync } from 'child_process';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { randomBytes } from 'crypto';
 import { resolve } from 'path';
 
-const CONFIG = JSON.parse(
-  readFileSync(resolve(__dirname, 'deploy.config.json'), 'utf-8')
-);
+const CONFIG_PATH = resolve(__dirname, 'deploy.config.json');
+if (!existsSync(CONFIG_PATH)) {
+  console.error(
+    `ERROR: ${CONFIG_PATH} not found. Copy deploy.config.example.json to deploy.config.json and fill in your values.`
+  );
+  process.exit(1);
+}
+const CONFIG = JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'));
 const REF: string = CONFIG.supabase.projectRef;
 const ADMIN_EMAIL: string = CONFIG.supabase.adminEmail;
 const TOKEN = process.env.SUPABASE_ACCESS_TOKEN;

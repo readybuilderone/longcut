@@ -25,6 +25,13 @@ HTTPS URL in four scripted steps.
 
 ## Configuration
 
+Copy the template and fill in your values (the real config is gitignored —
+it contains your account/subnet/project identifiers):
+
+```sh
+cp scripts/deploy/deploy.config.example.json scripts/deploy/deploy.config.json
+```
+
 Edit `scripts/deploy/deploy.config.json`: AWS account/region, service name,
 **public subnets** (Express Mode needs explicit subnets when the account has
 no default VPC), CPU architecture (**must match your build host** — see
