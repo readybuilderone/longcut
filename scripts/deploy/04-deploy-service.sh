@@ -53,6 +53,10 @@ SUPADATA_SECRET=""
 if aws ssm get-parameter --name "$SSM_PREFIX/supadata-api-key" --region "$REGION" >/dev/null 2>&1; then
   SUPADATA_SECRET=",{\"name\":\"SUPADATA_API_KEY\",\"valueFrom\":\"arn:aws:ssm:$REGION:$ACCOUNT:parameter$SSM_PREFIX/supadata-api-key\"}"
 fi
+GEMINI_SECRET=""
+if aws ssm get-parameter --name "$SSM_PREFIX/gemini-api-key" --region "$REGION" >/dev/null 2>&1; then
+  GEMINI_SECRET=",{\"name\":\"GEMINI_API_KEY\",\"valueFrom\":\"arn:aws:ssm:$REGION:$ACCOUNT:parameter$SSM_PREFIX/gemini-api-key\"}"
+fi
 UNLIMITED_ENV=""
 if [ -n "${UNLIMITED_VIDEO_USERS:-}" ]; then
   UNLIMITED_ENV=",{\"name\":\"UNLIMITED_VIDEO_USERS\",\"value\":\"$UNLIMITED_VIDEO_USERS\"}"
@@ -86,7 +90,7 @@ cat > /tmp/longcut-taskdef.json <<EOF
       ],
       "secrets": [
         {"name": "SUPABASE_SERVICE_ROLE_KEY", "valueFrom": "arn:aws:ssm:$REGION:$ACCOUNT:parameter$SSM_PREFIX/supabase-service-role-key"},
-        {"name": "CSRF_SALT", "valueFrom": "arn:aws:ssm:$REGION:$ACCOUNT:parameter$SSM_PREFIX/csrf-salt"}$SUPADATA_SECRET
+        {"name": "CSRF_SALT", "valueFrom": "arn:aws:ssm:$REGION:$ACCOUNT:parameter$SSM_PREFIX/csrf-salt"}$SUPADATA_SECRET$GEMINI_SECRET
       ],
       "logConfiguration": {
         "logDriver": "awslogs",
@@ -133,28 +137,47 @@ URL=$(aws ecs describe-express-gateway-service --region "$REGION" --service-arn 
   | python3 -c "import json,sys,re; m=re.search(r'[a-z0-9-]+\.ecs\.$REGION\.on\.aws', json.dumps(json.load(sys.stdin))); print(m.group(0) if m else '')")
 [ -n "$URL" ] || { echo "ERROR: could not extract service URL"; exit 1; }
 
-# Health is judged via the ALB target-health API (control plane), NOT by
-# curling the public URL: account-level firewall guardrails may restrict
-# ingress to corporate networks, making the URL unreachable from the deploy
-# host even though the service is perfectly healthy.
-TG_ARN=$(aws elbv2 describe-target-groups --region "$REGION" \
-  --query "TargetGroups[?contains(TargetGroupName, 'ecs-express')].TargetGroupArn | [0]" --output text)
-if [ -z "$TG_ARN" ] || [ "$TG_ARN" = "None" ]; then
-  TG_ARN=$(aws elbv2 describe-target-groups --region "$REGION" --query 'TargetGroups[0].TargetGroupArn' --output text)
-fi
-
-STATE=""
-for i in $(seq 1 20); do
+# Health is judged via the ECS deployment state + ALB target-health API
+# (control plane), NOT by curling the public URL: account-level firewall
+# guardrails may restrict ingress to corporate networks, making the URL
+# unreachable from the deploy host even though the service is healthy.
+#
+# The gate requires BOTH: (a) the rollout has converged — exactly one
+# deployment, running the revision we just registered (an old task staying
+# healthy while the new one crash-loops must NOT pass), and (b) that task
+# is healthy behind the ALB.
+DONE=""
+for i in $(seq 1 30); do
   sleep 20
-  STATE=$(aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --region "$REGION" \
-    --query 'TargetHealthDescriptions[].TargetHealth.State' --output text 2>/dev/null | tr '\t' ' ')
-  echo "  target health $i: ${STATE:-none}"
-  case "$STATE" in *healthy*) break ;; esac
+  read -r DEPLOY_COUNT PRIMARY_TD RUNNING <<< "$(aws ecs describe-services \
+    --cluster "$CLUSTER" --services "$SERVICE" --region "$REGION" \
+    --query 'services[0].[length(deployments), deployments[?status==`PRIMARY`].taskDefinition | [0], deployments[?status==`PRIMARY`].runningCount | [0]]' \
+    --output text 2>/dev/null | tr '\t' ' ')"
+  echo "  rollout $i: deployments=$DEPLOY_COUNT primary_running=$RUNNING"
+  if [ "$DEPLOY_COUNT" = "1" ] && [ "$PRIMARY_TD" = "$TD_ARN" ] && [ "${RUNNING:-0}" -ge 1 ]; then
+    DONE=yes
+    break
+  fi
 done
-case "$STATE" in
-  *healthy*) ;;
-  *) echo "ERROR: no healthy target after rollout"; exit 1 ;;
-esac
+[ "$DONE" = "yes" ] || { echo "ERROR: rollout did not converge to $TD_ARN"; exit 1; }
+
+# Belt-and-suspenders: if the service exposes its target group via the
+# classic loadBalancers attachment, verify a healthy target. Express Mode
+# services manage the ALB out-of-band and report None here — in that case
+# gate (a) stands alone, which is sound: with ALB-attached tasks, ECS kills
+# tasks failing TG health checks, so a converged deployment with running>=1
+# implies the health check is passing.
+TG_ARN=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --region "$REGION" \
+  --query 'services[0].loadBalancers[0].targetGroupArn' --output text 2>/dev/null)
+if [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
+  STATE=$(aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --region "$REGION" \
+    --query 'TargetHealthDescriptions[].TargetHealth.State' --output text 2>/dev/null | tr '\t' '\n' | sort -u | tr '\n' ' ')
+  echo "  target states: ${STATE:-none}"
+  case " $STATE" in
+    *" healthy "*) ;;
+    *) echo "ERROR: rollout converged but no target reports healthy"; exit 1 ;;
+  esac
+fi
 echo "live: https://$URL"
 
 CODE=$(curl -s -m 8 -o /dev/null -w "%{http_code}" "https://$URL$HEALTH" || true)

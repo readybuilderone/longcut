@@ -35,6 +35,16 @@ const REF: string = CONFIG.supabase.projectRef;
 const ADMIN_EMAIL: string = CONFIG.supabase.adminEmail;
 const TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
 
+// Values below are interpolated into raw SQL — reject anything that could
+// break out of a string literal rather than attempting to escape it.
+function assertSqlSafe(label: string, value: string) {
+  if (!/^[A-Za-z0-9@._+-]+$/.test(value)) {
+    throw new Error(`${label} contains characters unsafe for SQL interpolation: ${value}`);
+  }
+  return value;
+}
+assertSqlSafe('adminEmail', ADMIN_EMAIL);
+
 if (!TOKEN) {
   console.error('ERROR: SUPABASE_ACCESS_TOKEN is required.');
   process.exit(1);
@@ -175,20 +185,24 @@ async function step4_adminAccount() {
     console.log(`user exists: ${user.id}`);
   }
 
+  const userId = assertSqlSafe('user.id', user.id);
+
   // Profile row: the on_auth_user_created trigger is commented out in the
   // initial schema, so first login does NOT create it.
   await sql(
-    `INSERT INTO public.profiles (id, email) VALUES ('${user.id}', '${ADMIN_EMAIL}') ON CONFLICT (id) DO NOTHING;`
+    `INSERT INTO public.profiles (id, email) VALUES ('${userId}', '${ADMIN_EMAIL}') ON CONFLICT (id) DO NOTHING;`
   );
 
-  // Pro to 2099 (mirrors scripts/grant-pro-access.ts semantics)
+  // Pro to 2099 (mirrors scripts/grant-pro-access.ts semantics, including
+  // clearing cancel_at_period_end left over from any prior subscription)
   await sql(
     `UPDATE public.profiles SET
        subscription_tier = 'pro',
        subscription_status = 'active',
        subscription_current_period_start = COALESCE(subscription_current_period_start, NOW()),
-       subscription_current_period_end = '2099-12-31T00:00:00Z'
-     WHERE id = '${user.id}';`
+       subscription_current_period_end = '2099-12-31T00:00:00Z',
+       cancel_at_period_end = false
+     WHERE id = '${userId}';`
   );
   console.log('pro granted to 2099-12-31');
   console.log('');

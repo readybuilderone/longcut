@@ -7,7 +7,10 @@ HTTPS URL in four scripted steps.
 ## Prerequisites
 
 - Docker, AWS CLI **≥ 2.35** (older versions lack `taskDefinitionArn` on
-  `create-express-gateway-service`), Node 22+, `npx`
+  `create-express-gateway-service`), Node 22+, `npx`, `python3` (used by the
+  shell scripts to parse `deploy.config.json`)
+- The scripts invoke `sudo docker` by default; override with
+  `DOCKER=docker` if your user is in the docker group
 - AWS credentials with admin-ish access (IAM, ECR, ECS, SSM, Logs) — an
   instance role works; no static keys needed
 - A Supabase project (note its ref) and a personal access token (`sbp_...`)
@@ -39,7 +42,8 @@ SUPABASE_ACCESS_TOKEN=sbp_... npx tsx scripts/deploy/01-supabase-bootstrap.ts \
   [--password-file /tmp/.pw]
 
 # 2. AWS: ECR repo, IAM roles (execution/infrastructure/task), SSM secrets
-SUPABASE_SERVICE_ROLE_KEY=... [SUPADATA_API_KEY=...] \
+#    GEMINI_API_KEY is only needed if you use image generation.
+SUPABASE_SERVICE_ROLE_KEY=... [SUPADATA_API_KEY=...] [GEMINI_API_KEY=...] \
   ./scripts/deploy/02-aws-bootstrap.sh
 
 # 3. Build & push the image (NEXT_PUBLIC_* bake in at build time)
@@ -74,6 +78,8 @@ old task until the PRIMARY deployment is the only one).
 | Migrations fail on a fresh database | Handled by step 1's built-in repairs (function return-type conflict, data-assuming backfill/analytics migrations, pg_cron). If a *new* migration fails, fix forward — don't add to the repair list without understanding why. |
 | Bedrock 404 "model does not exist" | Model access not enabled in the region, or a non-bare model ID. See prerequisites. |
 | Login redirects to localhost | Step 4's back-fill didn't run (no `SUPABASE_ACCESS_TOKEN`). Patch `site_url` + `uri_allow_list` in Supabase auth config manually. |
+| Image generation returns 500 | `GEMINI_API_KEY` not provided in step 2 (text generation is unaffected — it uses Bedrock). |
+| Public URL unreachable but deploy says healthy | Health is judged via the ECS/ALB control plane. Account firewall guardrails may restrict ALB ingress (e.g. a corp-only prefix list on the security group) — access from an allowed network. |
 
 ## What is intentionally NOT here
 

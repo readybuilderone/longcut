@@ -35,8 +35,10 @@ ensure_role() { # name trust-json
 
 echo "== IAM: execution role =="
 ensure_role "$EXEC_ROLE" "$ECS_TASKS_TRUST"
+# attach-role-policy is idempotent (re-attach succeeds) — do NOT suppress
+# errors here; a typo'd policy ARN must fail loudly, not leave a broken role.
 aws iam attach-role-policy --role-name "$EXEC_ROLE" \
-  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy 2>/dev/null || true
+  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
 aws iam put-role-policy --role-name "$EXEC_ROLE" --policy-name longcut-ssm-read --policy-document \
   "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"ssm:GetParameters\",\"ssm:GetParameter\"],\"Resource\":\"arn:aws:ssm:$REGION:$ACCOUNT:parameter$SSM_PREFIX/*\"}]}"
 echo "ok: $EXEC_ROLE"
@@ -45,7 +47,7 @@ echo "== IAM: infrastructure role =="
 ensure_role "$INFRA_ROLE" "$ECS_TRUST"
 # NOTE: the managed policy lives under the service-role/ path prefix.
 aws iam attach-role-policy --role-name "$INFRA_ROLE" \
-  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices 2>/dev/null || true
+  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices
 echo "ok: $INFRA_ROLE"
 
 echo "== IAM: task role (Bedrock) =="
@@ -80,6 +82,12 @@ if [ -n "${SUPADATA_API_KEY:-}" ]; then
   put_param "$SSM_PREFIX/supadata-api-key" "$SUPADATA_API_KEY"
 elif ! have_param "$SSM_PREFIX/supadata-api-key"; then
   echo "note: SUPADATA_API_KEY not set — transcript fallback will be disabled until provided"
+fi
+
+if [ -n "${GEMINI_API_KEY:-}" ]; then
+  put_param "$SSM_PREFIX/gemini-api-key" "$GEMINI_API_KEY"
+elif ! have_param "$SSM_PREFIX/gemini-api-key"; then
+  echo "note: GEMINI_API_KEY not set — image generation will return 500 until provided"
 fi
 
 echo "AWS bootstrap complete."
