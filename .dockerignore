@@ -1,0 +1,13 @@
+node_modules
+.next
+.git
+.env*
+!.env.example
+docs
+.worktrees
+.smoke
+supabase/.temp
+*.md
+!README.md
+.agents
+skills-lock.json

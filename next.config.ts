@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Self-contained server bundle for container deployment (node server.js)
+  output: 'standalone',
   eslint: {
     // Avoid ESLint patch incompatibility failures during CI/production builds
     ignoreDuringBuilds: true,
